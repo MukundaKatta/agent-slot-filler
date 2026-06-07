@@ -93,6 +93,28 @@ def test_fill_double_escaped():
     assert f.fill("{{{{x}}}}", {}) == "{{x}}"
 
 
+def test_fill_value_with_double_braces_preserved():
+    # A value containing {{ or }} must NOT be re-interpreted as a template
+    # escape — substituted braces are emitted verbatim.
+    f = AgentSlotFiller()
+    assert f.fill("{x}", {"x": "{{weird}}"}) == "{{weird}}"
+
+
+def test_fill_value_with_single_braces_preserved():
+    f = AgentSlotFiller()
+    assert f.fill("[{x}]", {"x": "{y}"}) == "[{y}]"
+
+
+def test_fill_default_value_with_braces_preserved():
+    f = AgentSlotFiller(default="{{NA}}")
+    assert f.fill("{missing}", {}) == "{{NA}}"
+
+
+def test_fill_escape_around_slot():
+    f = AgentSlotFiller()
+    assert f.fill("{{ {name} }}", {"name": "X"}) == "{ X }"
+
+
 # ---------------------------------------------------------------------------
 # fill — strict mode
 # ---------------------------------------------------------------------------
@@ -167,6 +189,15 @@ def test_fill_partial_escaped_braces_stay():
     result = f.fill_partial("{{escaped}} {slot}", {"slot": "X"})
     assert "{{escaped}}" in result
     assert "X" in result
+
+
+def test_fill_partial_then_fill_round_trip():
+    # Two-pass filling: partial leaves escapes + unfilled slots, final fill
+    # resolves everything exactly once.
+    f = AgentSlotFiller()
+    partial = f.fill_partial("{{literal}} {a} {b}", {"a": "1"})
+    assert partial == "{{literal}} 1 {b}"
+    assert f.fill(partial, {"b": "2"}) == "{literal} 1 2"
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +358,18 @@ def test_fill_dict_preserves_keys():
     f = AgentSlotFiller()
     out = f.fill_dict({"hello": "world"}, {})
     assert out == {"hello": "world"}
+
+
+def test_fill_many_strict_raises():
+    f = AgentSlotFiller()
+    with pytest.raises(SlotError):
+        f.fill_many(["{a}", "{b}"], {"a": "1"}, strict=True)
+
+
+def test_fill_dict_strict_raises():
+    f = AgentSlotFiller()
+    with pytest.raises(SlotError):
+        f.fill_dict({"k": "{missing}"}, {}, strict=True)
 
 
 # ---------------------------------------------------------------------------

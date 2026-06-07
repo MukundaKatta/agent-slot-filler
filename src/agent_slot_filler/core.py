@@ -44,6 +44,11 @@ class SlotError(Exception):
 # Negative lookbehind/lookahead skip {{ ... }} escaped-brace sequences.
 _SLOT_RE = re.compile(r"(?<!\{)\{([A-Za-z_][A-Za-z0-9_]*)\}(?!\})")
 
+# Matches an escaped brace (``{{`` or ``}}``) OR a ``{slot}`` placeholder, in a
+# single left-to-right pass.  Resolving escapes and slots together ensures that
+# braces inside a substituted *value* are never mistaken for template escapes.
+_TOKEN_RE = re.compile(r"\{\{|\}\}|\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
 
 class AgentSlotFiller:
     """Fill named ``{slot}`` placeholders in template strings.
@@ -101,8 +106,7 @@ class AgentSlotFiller:
             missing = self.missing_slots(template, values)
             if missing:
                 raise SlotError(missing)
-        result = self._replace_slots(template, values, leave_missing=True)
-        return self._unescape(result)
+        return self._replace_and_unescape(template, values)
 
     def fill_partial(
         self,
@@ -220,6 +224,18 @@ class AgentSlotFiller:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _slot_value(self, name: str, values: dict[str, Any]) -> str | None:
+        """Resolve a slot's replacement, or ``None`` to leave it in place.
+
+        Returns the stringified value when present, the instance ``default``
+        when set, or ``None`` when the slot should be left as ``{slot}``.
+        """
+        if name in values:
+            return str(values[name])
+        if self._default is not None:
+            return self._default
+        return None
+
     def _replace_slots(
         self,
         template: str,
@@ -227,24 +243,48 @@ class AgentSlotFiller:
         *,
         leave_missing: bool,
     ) -> str:
-        """Replace ``{slot}`` occurrences; optionally leave missing ones."""
+        """Replace ``{slot}`` occurrences without resolving escaped braces.
+
+        Used by :meth:`fill_partial` so the result remains a valid template
+        (``{{``/``}}`` escapes are preserved) that can be filled again.
+        """
 
         def replacer(m: re.Match[str]) -> str:
             name = m.group(1)
-            if name in values:
-                return str(values[name])
-            if self._default is not None:
-                return self._default
+            value = self._slot_value(name, values)
+            if value is not None:
+                return value
             if leave_missing:
                 return m.group(0)  # keep original {slot}
             return ""
 
         return _SLOT_RE.sub(replacer, template)
 
-    @staticmethod
-    def _unescape(text: str) -> str:
-        """Convert ``{{`` → ``{`` and ``}}`` → ``}``."""
-        return text.replace("{{", "{").replace("}}", "}")
+    def _replace_and_unescape(
+        self,
+        template: str,
+        values: dict[str, Any],
+    ) -> str:
+        """Replace ``{slot}`` placeholders and resolve ``{{``/``}}`` escapes.
+
+        Performed in a single left-to-right pass so that braces appearing in a
+        substituted *value* are emitted verbatim and never re-interpreted as
+        template escapes.
+        """
+
+        def replacer(m: re.Match[str]) -> str:
+            token = m.group(0)
+            if token == "{{":
+                return "{"
+            if token == "}}":
+                return "}"
+            name = m.group(1)
+            value = self._slot_value(name, values)
+            if value is not None:
+                return value
+            return token  # keep original {slot}
+
+        return _TOKEN_RE.sub(replacer, template)
 
     # ------------------------------------------------------------------
     # Module-level convenience functions (also available on the instance)
