@@ -3,7 +3,7 @@
 Fill named `{slot}` placeholders in template strings for LLM agents.
 
 ```python
-from agent_slot_filler import AgentSlotFiller
+from agent_slot_filler import AgentSlotFiller, fill, slots_in, missing_slots
 
 filler = AgentSlotFiller()
 
@@ -21,6 +21,11 @@ filler.missing_slots(template, {"name": "x"}) # ["count"]
 
 # Strict validation
 filler.validate(template, {"name": "x"})  # raises SlotError listing "count"
+
+# Module-level shortcuts (one-off use, no instance needed)
+fill("Hi {who}", {"who": "there"})        # "Hi there"
+slots_in("{a} {b}")                        # ["a", "b"]
+missing_slots("{a} {b}", {"a": 1})        # ["b"]
 ```
 
 ## Install
@@ -63,10 +68,39 @@ f.is_complete(template, values)           -> bool
 f.has_slots(template)                     -> bool
 f.slot_count(template)                    -> int
 
-# Module-level shortcuts
+# Module-level shortcuts (importable directly from `agent_slot_filler`)
 fill(template, values, *, strict=False)   -> str
 slots_in(template)                        -> list[str]
 missing_slots(template, values)           -> list[str]
+```
+
+## Behavior notes
+
+- **Slot names are identifiers.** A slot matches `{name}` where `name` starts
+  with a letter or underscore and contains only letters, digits, and
+  underscores. `{1bad}` and `{a b}` are left untouched.
+- **Escapes vs. values.** `{{` and `}}` are resolved to literal braces by
+  `fill` in a single left-to-right pass, so braces inside a *substituted value*
+  are emitted verbatim and never re-interpreted (`fill("{x}", {"x": "{{y}}"})`
+  yields `"{{y}}"`). `fill_partial` does **not** resolve escapes, so its output
+  remains a valid template you can fill again.
+- **Stringification.** Non-string values are converted with `str()`
+  (`fill("{n}", {"n": 42})` → `"42"`).
+
+## Development
+
+The package is pure standard library and the tests use only `unittest`:
+
+```bash
+python -m unittest discover -s tests
+```
+
+Linting (optional) uses [ruff](https://docs.astral.sh/ruff/):
+
+```bash
+pip install -e ".[dev]"
+ruff check src tests
+ruff format --check src tests
 ```
 
 ## License
