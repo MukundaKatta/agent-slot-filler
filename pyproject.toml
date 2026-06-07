@@ -20,11 +20,14 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
     "Topic :: Software Development :: Libraries",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "ruff>=0.4"]
+# Tests use only the standard library (unittest); dev deps are for linting.
+dev = ["ruff>=0.4"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_slot_filler"]
@@ -34,3 +37,9 @@ line-length = 88
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# The test module inserts ``src/`` on sys.path before importing the package so
+# the suite is runnable without an editable install; that import is intentionally
+# placed after the bootstrap code (E402).
+"tests/test_agent_slot_filler.py" = ["E402"]
