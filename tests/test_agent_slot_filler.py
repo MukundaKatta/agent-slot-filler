@@ -373,6 +373,67 @@ def test_fill_dict_strict_raises():
 
 
 # ---------------------------------------------------------------------------
+# Slot adjacent to escaped braces — inspection must agree with fill
+#
+# Regression: a slot wrapped in escaped braces, e.g. "{{{name}}}" tokenizes as
+# "{{" + "{name}" + "}}".  fill() substitutes the slot, so slots_in /
+# missing_slots / has_slots / strict-validation must all see it too.
+# ---------------------------------------------------------------------------
+
+
+def test_slots_in_slot_wrapped_in_escapes():
+    f = AgentSlotFiller()
+    assert f.slots_in("{{{name}}}") == ["name"]
+
+
+def test_fill_slot_wrapped_in_escapes():
+    f = AgentSlotFiller()
+    assert f.fill("{{{name}}}", {"name": "X"}) == "{X}"
+
+
+def test_missing_slots_slot_wrapped_in_escapes():
+    f = AgentSlotFiller()
+    assert f.missing_slots("{{{name}}}", {}) == ["name"]
+
+
+def test_has_slots_slot_wrapped_in_escapes():
+    f = AgentSlotFiller()
+    assert f.has_slots("{{{name}}}") is True
+    # Fully escaped — no actual slot.
+    assert f.has_slots("{{{{x}}}}") is False
+
+
+def test_strict_raises_on_slot_wrapped_in_escapes():
+    # fill() would try to substitute 'name', so strict mode MUST flag it.
+    f = AgentSlotFiller(strict=True)
+    with pytest.raises(SlotError) as exc:
+        f.fill("{{{name}}}", {})
+    assert exc.value.missing == ["name"]
+
+
+def test_validate_consistent_with_fill_for_escaped_neighbor():
+    f = AgentSlotFiller()
+    with pytest.raises(SlotError):
+        f.validate("{{{name}}}", {})
+
+
+def test_fill_partial_slot_wrapped_in_escapes_roundtrip():
+    f = AgentSlotFiller()
+    # Escapes preserved, slot left in place when unfilled.
+    assert f.fill_partial("{{{name}}}", {}) == "{{{name}}}"
+    # Slot filled, escapes preserved for a later fill().
+    partial = f.fill_partial("{{{name}}}", {"name": "X"})
+    assert partial == "{{X}}"
+    assert f.fill(partial, {}) == "{X}"
+
+
+def test_filled_slots_slot_wrapped_in_escapes():
+    f = AgentSlotFiller()
+    assert f.filled_slots("{{{name}}}", {"name": "X"}) == ["name"]
+    assert f.filled_slots("{{{name}}}", {}) == []
+
+
+# ---------------------------------------------------------------------------
 # Module-level convenience functions
 # ---------------------------------------------------------------------------
 

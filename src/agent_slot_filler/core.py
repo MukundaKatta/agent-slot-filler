@@ -28,7 +28,10 @@ Example::
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class SlotError(Exception):
@@ -40,14 +43,31 @@ class SlotError(Exception):
         super().__init__(f"Missing slots: {names}")
 
 
-# Matches {slot_name} — slot names are identifiers (letters, digits, _).
-# Negative lookbehind/lookahead skip {{ ... }} escaped-brace sequences.
-_SLOT_RE = re.compile(r"(?<!\{)\{([A-Za-z_][A-Za-z0-9_]*)\}(?!\})")
-
 # Matches an escaped brace (``{{`` or ``}}``) OR a ``{slot}`` placeholder, in a
 # single left-to-right pass.  Resolving escapes and slots together ensures that
 # braces inside a substituted *value* are never mistaken for template escapes.
+#
+# This is the single source of truth for what counts as a slot: both the
+# substitution methods (:meth:`fill`) and the inspection helpers
+# (:meth:`slots_in`, :meth:`missing_slots`, ...) tokenize through it, so the
+# slots reported are exactly the slots ``fill`` would substitute.  A naive
+# ``{slot}`` regex with brace lookarounds disagrees on sequences like
+# ``{{{name}}}`` (``{{`` + ``{name}`` + ``}}``), where the slot is adjacent to
+# escaped braces.
 _TOKEN_RE = re.compile(r"\{\{|\}\}|\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _iter_slots(template: str) -> Iterator[str]:
+    """Yield slot names in *template* in left-to-right order.
+
+    Uses the same tokenizer as :meth:`AgentSlotFiller.fill` so that escaped
+    braces (``{{``/``}}``) are consumed before slot matching, guaranteeing the
+    yielded names match exactly the slots that would be substituted.
+    """
+    for m in _TOKEN_RE.finditer(template):
+        name = m.group(1)
+        if name is not None:
+            yield name
 
 
 class AgentSlotFiller:
@@ -130,7 +150,7 @@ class AgentSlotFiller:
 
     def slots_in(self, template: str) -> list[str]:
         """Return sorted list of unique slot names found in *template*."""
-        return sorted({m.group(1) for m in _SLOT_RE.finditer(template)})
+        return sorted(set(_iter_slots(template)))
 
     def missing_slots(
         self,
@@ -139,9 +159,7 @@ class AgentSlotFiller:
     ) -> list[str]:
         """Return sorted list of slot names in *template* not in *values*."""
         keys = set(values.keys())
-        return sorted(
-            {m.group(1) for m in _SLOT_RE.finditer(template) if m.group(1) not in keys}
-        )
+        return sorted({name for name in _iter_slots(template) if name not in keys})
 
     def filled_slots(
         self,
@@ -150,9 +168,7 @@ class AgentSlotFiller:
     ) -> list[str]:
         """Return sorted list of slot names in *template* that *values* covers."""
         keys = set(values.keys())
-        return sorted(
-            {m.group(1) for m in _SLOT_RE.finditer(template) if m.group(1) in keys}
-        )
+        return sorted({name for name in _iter_slots(template) if name in keys})
 
     def validate(
         self,
@@ -186,7 +202,7 @@ class AgentSlotFiller:
 
     def has_slots(self, template: str) -> bool:
         """Return ``True`` if *template* contains at least one slot."""
-        return bool(_SLOT_RE.search(template))
+        return next(_iter_slots(template), None) is not None
 
     # ------------------------------------------------------------------
     # Multi-template helpers
@@ -246,11 +262,16 @@ class AgentSlotFiller:
         """Replace ``{slot}`` occurrences without resolving escaped braces.
 
         Used by :meth:`fill_partial` so the result remains a valid template
-        (``{{``/``}}`` escapes are preserved) that can be filled again.
+        (``{{``/``}}`` escapes are preserved) that can be filled again.  Tokens
+        are matched left-to-right with the same tokenizer as :meth:`fill`, so an
+        escaped brace adjacent to a slot (e.g. ``{{{name}}}``) is recognized
+        identically — but escapes themselves are emitted verbatim.
         """
 
         def replacer(m: re.Match[str]) -> str:
             name = m.group(1)
+            if name is None:
+                return m.group(0)  # escaped brace ({{ or }}) — leave untouched
             value = self._slot_value(name, values)
             if value is not None:
                 return value
@@ -258,7 +279,7 @@ class AgentSlotFiller:
                 return m.group(0)  # keep original {slot}
             return ""
 
-        return _SLOT_RE.sub(replacer, template)
+        return _TOKEN_RE.sub(replacer, template)
 
     def _replace_and_unescape(
         self,
